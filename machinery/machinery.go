@@ -1,6 +1,7 @@
 package machinery
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -8,6 +9,10 @@ import (
 	"github.com/RichardKnop/machinery/v1/config"
 	"github.com/RichardKnop/machinery/v1/log"
 	"github.com/RichardKnop/machinery/v1/tasks"
+	mytasks "github.com/evandroferreiras/machinery-tutorial/machinery/tasks"
+	"github.com/google/uuid"
+	opentracing "github.com/opentracing/opentracing-go"
+	opentracing_log "github.com/opentracing/opentracing-go/log"
 )
 
 var configPath = "config/config.yml"
@@ -42,7 +47,10 @@ func startServer() (*machinery.Server, error) {
 	}
 
 	//Register tasks
-	tasks := map[string]interface{}{}
+	tasks := map[string]interface{}{
+		"getTopStackOverFlowTags":    mytasks.GetTopStackOverFlowTags,
+		"getTopGitHubRepoByLanguage": mytasks.GetTopGitHubRepoByLanguage,
+	}
 
 	err = server.RegisterTasks(tasks)
 	if err != nil {
@@ -53,29 +61,26 @@ func startServer() (*machinery.Server, error) {
 }
 
 func (b builder) startWorker(errorsChan chan error) {
-	fmt.Println("startWorker")
 	consumerTag := "worker"
 	worker := b.server.NewWorker(consumerTag, 0)
 	worker.LaunchAsync(errorsChan)
 }
 
 func (b builder) processTasks() error {
-	fmt.Println("processTasks")
-	// var taskGithub = tasks.Signature{
-	// 	Name: "getTopGitHubRepoByLanguage",
-	// 	Args: []tasks.Arg{
-	// 		{
-	// 			Type:  "string",
-	// 			Value: "javascript",
-	// 		},
-	// 	},
-	// }
-
 	var taskStackoverflow = tasks.Signature{
 		Name: "getTopStackOverFlowTags",
 	}
 
-	asyncResult, err := b.server.SendTask(&taskStackoverflow)
+	span, ctx := opentracing.StartSpanFromContext(context.Background(), "send")
+	defer span.Finish()
+
+	batchID := uuid.New().String()
+	span.SetBaggageItem("batch.id", batchID)
+	span.LogFields(opentracing_log.String("batch.id", batchID))
+
+	log.INFO.Println("Starting batch:", batchID)
+
+	asyncResult, err := b.server.SendTaskWithContext(ctx, &taskStackoverflow)
 	if err != nil {
 		return fmt.Errorf("Could not send task: %s", err.Error())
 	}
@@ -84,7 +89,42 @@ func (b builder) processTasks() error {
 	if err != nil {
 		return fmt.Errorf("Getting task result failed with error: %s", err.Error())
 	}
-	log.INFO.Printf(" = %v\n", tasks.HumanReadableResults(results))
+
+	for _, r := range results {
+		log.INFO.Println(r.Interface())
+		i := r.Interface()
+		a := i.([]string)
+
+		var t = make([]*tasks.Signature, 0)
+
+		for _, val := range a {
+			var taskGithub = tasks.Signature{
+				Name: "getTopGitHubRepoByLanguage",
+				Args: []tasks.Arg{
+					{
+						Type:  "string",
+						Value: fmt.Sprintf("%v", val),
+					},
+				},
+			}
+
+			t = append(t, &taskGithub)
+		}
+		group, _ := tasks.NewGroup(t...)
+		asyncResults, err := b.server.SendGroup(group, 0)
+		if err != nil {
+			return fmt.Errorf("Getting group result failed with error: %s", err.Error())
+		}
+		for _, asyncResult := range asyncResults {
+			results, err := asyncResult.Get(time.Duration(time.Millisecond * 5))
+			if err != nil {
+				return fmt.Errorf("Getting group AsyncResult failed with error: %s", err.Error())
+			}
+			for _, result := range results {
+				fmt.Println(result.Interface())
+			}
+		}
+	}
 
 	return nil
 }

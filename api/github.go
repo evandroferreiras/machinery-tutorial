@@ -22,6 +22,7 @@ type repo struct {
 	Items []repoItems
 }
 
+// GetTopRepoByLanguage ...
 func GetTopRepoByLanguage(language string) ([]string, error) {
 	url := fmt.Sprintf(gitHubURL, language)
 	fmt.Println(url)
@@ -36,8 +37,10 @@ func GetTopRepoByLanguage(language string) ([]string, error) {
 	}
 
 	result := make([]string, 0)
-	for _, value := range dat.Items[:5] {
-		result = append(result, value.Name)
+	if len(dat.Items) > 0 {
+		for _, value := range dat.Items[:5] {
+			result = append(result, value.Name)
+		}
 	}
 
 	return result, nil
