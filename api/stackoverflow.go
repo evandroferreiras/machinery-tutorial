@@ -29,7 +29,7 @@ func GetTopStackOverFlowTags() ([]string, error) {
 	if err := json.Unmarshal(data, &dat); err != nil {
 		return nil, err
 	}
-
+	
 	items := dat.Items
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].Count > items[j].Count

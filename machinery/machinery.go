@@ -9,7 +9,6 @@ import (
 	"github.com/RichardKnop/machinery/v1/config"
 	"github.com/RichardKnop/machinery/v1/log"
 	"github.com/RichardKnop/machinery/v1/tasks"
-	mytasks "github.com/evandroferreiras/machinery-tutorial/machinery/tasks"
 	"github.com/google/uuid"
 	opentracing "github.com/opentracing/opentracing-go"
 	opentracing_log "github.com/opentracing/opentracing-go/log"
@@ -48,8 +47,8 @@ func startServer() (*machinery.Server, error) {
 
 	//Register tasks
 	tasks := map[string]interface{}{
-		"getTopStackOverFlowTags":    mytasks.GetTopStackOverFlowTags,
-		"getTopGitHubRepoByLanguage": mytasks.GetTopGitHubRepoByLanguage,
+		"getTopStackOverFlowTags":    GetTopStackOverFlowTags,
+		"getTopGitHubRepoByLanguage": GetTopGitHubRepoByLanguage,
 	}
 
 	err = server.RegisterTasks(tasks)
@@ -62,7 +61,7 @@ func startServer() (*machinery.Server, error) {
 
 func (b builder) startWorker(errorsChan chan error) {
 	consumerTag := "worker"
-	worker := b.server.NewWorker(consumerTag, 0)
+	worker := b.server.NewWorker(consumerTag, 10)
 	worker.LaunchAsync(errorsChan)
 }
 
