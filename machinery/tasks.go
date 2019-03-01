@@ -2,6 +2,7 @@ package machinery
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/evandroferreiras/machinery-tutorial/api"
 )
@@ -25,4 +26,15 @@ func GetTopGitHubRepoByLanguage(language string) (string, error) {
 	}
 	marshalled, err := json.Marshal(GitHubResponse{language, repositories})
 	return string(marshalled), err
+}
+
+// PrintAllResults ...
+func PrintAllResults(args ... string) error {
+	fmt.Println("-RELATORIO--------------------------")
+	
+	for _, r := range args {
+		fmt.Println(r)
+	}
+	fmt.Println("-----------------------------------")
+	return nil
 }

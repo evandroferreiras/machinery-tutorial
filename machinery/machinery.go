@@ -1,29 +1,24 @@
 package machinery
 
 import (
-	"context"
 	"fmt"
 	"time"
 
 	machinery "github.com/RichardKnop/machinery/v1"
 	"github.com/RichardKnop/machinery/v1/config"
-	"github.com/RichardKnop/machinery/v1/log"
 	"github.com/RichardKnop/machinery/v1/tasks"
-	"github.com/google/uuid"
-	opentracing "github.com/opentracing/opentracing-go"
-	opentracing_log "github.com/opentracing/opentracing-go/log"
 )
 
 var configPath = "config/config.yml"
 
-// builder ...
-type builder struct {
+// Builder ...
+type Builder struct {
 	server *machinery.Server
 }
 
 // NewBuilder ...
-func NewBuilder() *builder {
-	b := new(builder)
+func NewBuilder() *Builder {
+	b := new(Builder)
 	b.server, _ = startServer()
 
 	return b
@@ -49,6 +44,7 @@ func startServer() (*machinery.Server, error) {
 	tasks := map[string]interface{}{
 		"getTopStackOverFlowTags":    GetTopStackOverFlowTags,
 		"getTopGitHubRepoByLanguage": GetTopGitHubRepoByLanguage,
+		"printAllResults":            PrintAllResults,
 	}
 
 	err = server.RegisterTasks(tasks)
@@ -59,80 +55,67 @@ func startServer() (*machinery.Server, error) {
 	return server, nil
 }
 
-func (b builder) startWorker(errorsChan chan error) {
+func (b Builder) startWorker(errorsChan chan error) {
 	consumerTag := "worker"
 	worker := b.server.NewWorker(consumerTag, 10)
 	worker.LaunchAsync(errorsChan)
 }
 
-func (b builder) processTasks() error {
+func (b Builder) executeTaskToGetStackOverflowResults() ([]string, error) {
 	var taskStackoverflow = tasks.Signature{
 		Name: "getTopStackOverFlowTags",
 	}
 
-	span, ctx := opentracing.StartSpanFromContext(context.Background(), "send")
-	defer span.Finish()
-
-	batchID := uuid.New().String()
-	span.SetBaggageItem("batch.id", batchID)
-	span.LogFields(opentracing_log.String("batch.id", batchID))
-
-	log.INFO.Println("Starting batch:", batchID)
-
-	asyncResult, err := b.server.SendTaskWithContext(ctx, &taskStackoverflow)
+	asyncResult, err := b.server.SendTask(&taskStackoverflow)
 	if err != nil {
-		return fmt.Errorf("Could not send task: %s", err.Error())
+		return nil, fmt.Errorf("Could not send task: %s", err.Error())
 	}
 
 	results, err := asyncResult.Get(time.Duration(time.Millisecond * 5))
 	if err != nil {
-		return fmt.Errorf("Getting task result failed with error: %s", err.Error())
+		return nil, fmt.Errorf("Getting task result failed with error: %s", err.Error())
 	}
 
-	for _, r := range results {
-		log.INFO.Println(r.Interface())
-		i := r.Interface()
-		a := i.([]string)
+	return results[0].Interface().([]string), nil
+}
 
-		var t = make([]*tasks.Signature, 0)
-
-		for _, val := range a {
-			var taskGithub = tasks.Signature{
-				Name: "getTopGitHubRepoByLanguage",
-				Args: []tasks.Arg{
-					{
-						Type:  "string",
-						Value: fmt.Sprintf("%v", val),
-					},
+func (b Builder) processTasks() error {
+	tags, err := b.executeTaskToGetStackOverflowResults()
+	if err != nil {
+		return err
+	}
+	var githubTasks = make([]*tasks.Signature, 0)
+	for _, val := range tags {
+		var taskGithub = tasks.Signature{
+			Name: "getTopGitHubRepoByLanguage",
+			Args: []tasks.Arg{
+				{
+					Type:  "string",
+					Value: fmt.Sprintf("%v", val),
 				},
-			}
-
-			t = append(t, &taskGithub)
+			},
 		}
-		group, _ := tasks.NewGroup(t...)
-		asyncResults, err := b.server.SendGroup(group, 0)
-		if err != nil {
-			return fmt.Errorf("Getting group result failed with error: %s", err.Error())
-		}
-		for _, asyncResult := range asyncResults {
-			results, err := asyncResult.Get(time.Duration(time.Millisecond * 5))
-			if err != nil {
-				return fmt.Errorf("Getting group AsyncResult failed with error: %s", err.Error())
-			}
-			for _, result := range results {
-				fmt.Println(result.Interface())
-			}
-		}
+		githubTasks = append(githubTasks, &taskGithub)
 	}
-
+	group, err := tasks.NewGroup(githubTasks...)
+	if err != nil {
+		return fmt.Errorf("Could not define new group: %s", err.Error())
+	}
+	var taskPrintAll = tasks.Signature{
+		Name: "printAllResults",
+	}
+	chord, err := tasks.NewChord(group, &taskPrintAll)
+	_, err = b.server.SendChord(chord, 0)
+	if err != nil {
+		return fmt.Errorf("Could not send chord: %s", err.Error())
+	}
 	return nil
 }
 
 // Do ...
-func (b builder) Do() error {
+func (b Builder) Do() error {
 	errorsChan := make(chan error)
 	b.startWorker(errorsChan)
-
 	err := b.processTasks()
 	if err != nil {
 		return err
